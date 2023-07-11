@@ -1,7 +1,7 @@
 *.pt
 dataset
 evaluation/data
-evaluation/__pycache__
+**/__pycache__
 *.ipynb
 distill/ema_logged_files
 distill/logged_files
