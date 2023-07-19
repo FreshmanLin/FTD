@@ -4,9 +4,12 @@ import torchvision.transforms as transforms
 from torch.utils.data import Dataset
 import tqdm
 import kornia as K
+import sys; sys.path.append("..")
+from utils.utils_baseline import get_dataset, get_network, get_eval_pool, epoch, get_time, DiffAugment, augment, ParamDiffAug, TensorDataset
+
 
 class distilled_dataset(Dataset):
-    def __init__(self, transform):
+    def __init__(self):
         # mean = [0.4914, 0.4822, 0.4465]
         # std = [0.2023, 0.1994, 0.2010]
         # imgs = unnormalize(torch.load(pt_dir), mean, std)
@@ -18,15 +21,17 @@ class distilled_dataset(Dataset):
         # zca = zca_op()
         # images = zca.inverse_transform(images)
         # images = normalize_minmax(images)
-        
-        self.data = images
+        dsa_param = ParamDiffAug()
+        img = DiffAugment(images, 'color_crop_cutout_flip_scale_rotate', param=dsa_param)
+        self.data = img
         self.labels = torch.load(self.label_dir)
         self.len = self.data.size(0)
-        self.transform = transform
+        # self.transform = transform
 
     def __getitem__(self, idx):
-        transform_compose = transforms.Compose([transforms.ToPILImage(mode='RGB'), self.transform])
-        img_tensor = transform_compose(self.data[idx])
+        # transform_compose = transforms.Compose([transforms.ToPILImage(mode='RGB'), self.transform])
+        # img_tensor = transform_compose(self.data[idx])
+        img_tensor = self.data[idx]
         label = self.labels[idx].item()
         return img_tensor, label
     

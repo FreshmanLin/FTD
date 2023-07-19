@@ -13,6 +13,7 @@ import copy
 import time
 import torch.nn as nn
 import numpy as np
+from torch.utils.data import ConcatDataset
 
 os.environ['CUDA_VISIBLE_DEVICES']='2'
 
@@ -102,16 +103,22 @@ def evaluate_synset(it_eval, net, images_train, images_train_syn, labels_train, 
     dst_train = TensorDataset(images_train, labels_train)
     dst_train_syn = TensorDataset(images_train_syn, labels_train_syn)
 
-    batch_size = int(0.9 * args.batch_train)
+    batch_size = int(args.mix_ratio * args.batch_train)
     trainloader = torch.utils.data.DataLoader(dst_train, batch_size = batch_size, shuffle=True, num_workers=0)
     trainloader_syn = torch.utils.data.DataLoader(dst_train_syn, batch_size = args.batch_train-batch_size, shuffle=True, num_workers=0)
 
+    dst_mix = ConcatDataset([dst_train, dst_train_syn])
+    trainloader_mix = torch.utils.data.DataLoader(dst_mix, batch_size = args.batch_train, shuffle=True, num_workers=0)
     start = time.time()
     acc_train_list = []
     loss_train_list = []
 
     for ep in tqdm.tqdm(range(Epoch+1)):
-        loss_train, acc_train = epoch_mix('train', trainloader, trainloader_syn, net, optimizer, criterion, args, aug=True, texture=texture)
+        if args.mix_batch:
+            loss_train, acc_train = epoch_mix('train', trainloader, trainloader_syn, net, optimizer, criterion, args, aug=True, texture=texture)
+        else:
+            loss_train, acc_train = epoch('train', trainloader_mix, net, optimizer, criterion, args, aug=True, texture=texture)
+
         acc_train_list.append(acc_train)
         loss_train_list.append(loss_train)
         if ep == Epoch:
@@ -194,10 +201,14 @@ if __name__ == "__main__":
 
     parser.add_argument('--force_save', action='store_true', help='this will save images for 50ipc')
     parser.add_argument('--ema_decay', type=float, default=0.999)
+    parser.add_argument('--mix_batch', type=str, default='False', choices=['True', 'False'],
+                        help='Mix synthetic dataset and original dataset in each minibatch or overall.')
+    parser.add_argument('--mix_ratio', type=float, default=0.9)
 
     args = parser.parse_args()
 
     # initialize(args, seed=42)
+    args.mix_batch = True
     args.dsa = True if args.dsa == 'True' else False
     args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
