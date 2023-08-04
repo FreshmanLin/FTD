@@ -7,7 +7,7 @@ import torch.nn.functional as F
 import torch.optim as optim
 import torchvision
 from torchvision import datasets, transforms
-from torch.utils.data import DataLoader, ConcatDataset
+from torch.utils.data import DataLoader, ConcatDataset, Subset
 import ray
 from ray import tune
 from ray.tune.schedulers import ASHAScheduler
@@ -21,9 +21,18 @@ from utility.cutout import Cutout
 
 from utils.utils_baseline import get_dataset, get_network, get_eval_pool, epoch, get_time, DiffAugment, augment, ParamDiffAug, TensorDataset
 from dataset_syn import distilled_dataset
-
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from model.resnet import ResNet18
-os.environ['CUDA_VISIBLE_DEVICES']='1'
+os.environ['CUDA_VISIBLE_DEVICES']='0'
+
+def _get_statistics(cifar):
+    if cifar=="CIFAR100":
+        train_set = torchvision.datasets.CIFAR100(root='data', train=True, download=True, transform=transforms.ToTensor())
+    else:
+        train_set = torchvision.datasets.CIFAR10(root='data', train=True, download=True, transform=transforms.ToTensor())
+
+    data = torch.cat([d[0] for d in DataLoader(train_set)])
+    return data.mean(dim=[0, 2, 3]), data.std(dim=[0, 2, 3])
 
 def smooth_crossentropy(pred, gold, smoothing=0.1):
     n_class = pred.size(1)
@@ -44,9 +53,11 @@ def train_mix(args):
     # dataset = Cifar_syn(args.batch_size, args.threads)
 
     # transform = transforms.Compose([transforms.ToTensor()])
-    dst_train_syn = distilled_dataset()
-    mean = [0.5071, 0.4866, 0.4409]
-    std = [0.2673, 0.2564, 0.2762]
+    cifar = args.dataset
+    dst_train_syn = distilled_dataset(cifar)
+    # mean = [0.5071, 0.4866, 0.4409]
+    # std = [0.2673, 0.2564, 0.2762]
+    mean, std = _get_statistics(cifar)
     train_transform = transforms.Compose([
         torchvision.transforms.RandomCrop(size=(32, 32), padding=4),
         torchvision.transforms.RandomHorizontalFlip(),
@@ -58,13 +69,27 @@ def train_mix(args):
         transforms.ToTensor(),
         transforms.Normalize(mean, std)
     ])
-    dst_train = datasets.CIFAR100('data', train=True, download=True, transform=train_transform)
-    dst_test = datasets.CIFAR100('data', train=False, download=True, transform=test_transform)
+    
+    if cifar=="CIFAR100":
+        dst_train = datasets.CIFAR100('data', train=True, download=True, transform=train_transform)
+        dst_test = datasets.CIFAR100('data', train=False, download=True, transform=test_transform)
+        classes=100
+    else:
+        dst_train = datasets.CIFAR10('data', train=True, download=True, transform=train_transform)
+        dst_test = datasets.CIFAR10('data', train=False, download=True, transform=test_transform)        
+        classes=10
+    r = args.prune_ratio
+    print("Prune ratio =", r)
+
+    if r>0:
+        indices = np.load(f"/home/stulium/FlatTrajectoryDistillation_FTD/evaluation/sorted_dataset_indexes_{cifar}.npy", allow_pickle=True)
+        r_indices = indices[:int((1-r)*len(indices))]
+        dst_train = Subset(dst_train, r_indices)
 
     if args.mix_batch:
         batch_size = int(args.mix_ratio * args.batch_size)
-        train_loader = DataLoader(dst_train, batch_size=batch_size, shuffle=False, num_workers=args.threads)
-        train_loader_syn = DataLoader(dst_train_syn, batch_size=args.batch_size-batch_size, shuffle=False, num_workers=args.threads)
+        train_loader = DataLoader(dst_train, batch_size=batch_size, shuffle=True, num_workers=args.threads)
+        train_loader_syn = DataLoader(dst_train_syn, batch_size=args.batch_size-batch_size, shuffle=True, num_workers=args.threads)
     else:
         dst_mix = ConcatDataset([dst_train, dst_train_syn])
         train_loader = torch.utils.data.DataLoader(dst_mix, batch_size = args.batch_train, shuffle=True, num_workers=args.threads)
@@ -73,7 +98,7 @@ def train_mix(args):
 
     # log = Log(log_each=10)
     # model = WideResNet(args.depth, args.width_factor, args.dropout, in_channels=3, labels=10).to(device)
-    model = ResNet18(100).to(device)
+    model = ResNet18(classes).to(device)
     # model = ConvNet3(3, 100).to(device)
     # model_eval = 'ConvNet'
     # channel = 3
@@ -83,7 +108,8 @@ def train_mix(args):
     base_optimizer = torch.optim.SGD
     # optimizer = SAM(model.parameters(), base_optimizer, rho=args.rho, adaptive=args.adaptive, lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
     optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay)
-    scheduler = StepLR(optimizer, args.learning_rate, args.epochs)
+    # scheduler = StepLR(optimizer, args.learning_rate, args.epochs)
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
 
     for epoch in range(args.epochs):
         model.train()
@@ -129,7 +155,8 @@ def train_mix(args):
             with torch.no_grad():
                 correct = torch.argmax(predictions.data, 1) == targets
                 # log(model, loss.cpu(), correct.cpu(), scheduler.lr())
-                scheduler(epoch)
+                # scheduler(epoch)
+                scheduler.step(epoch)
 
         model.eval()
         # log.eval(len_dataset=len(test_loader))
@@ -158,7 +185,7 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", default=0.0, type=float, help="Dropout rate.")
     parser.add_argument("--epochs", default=200, type=int, help="Total number of epochs.")
     parser.add_argument("--label_smoothing", default=0.1, type=float, help="Use 0.0 for no label smoothing.")
-    parser.add_argument("--learning_rate", default=0.1, type=float, help="Base learning rate at the start of the training.")
+    parser.add_argument("--learning_rate", default=0.05, type=float, help="Base learning rate at the start of the training.")
     parser.add_argument("--momentum", default=0.9, type=float, help="SGD Momentum.")
     parser.add_argument("--threads", default=2, type=int, help="Number of CPU threads for dataloaders.")
     parser.add_argument("--rho", default=2.0, type=int, help="Rho parameter for SAM.")
@@ -171,16 +198,18 @@ if __name__ == "__main__":
     parser.add_argument('--mix_batch', type=str, default='True', choices=['True', 'False'],
                         help='Mix synthetic dataset and original dataset in each minibatch or overall.')
     parser.add_argument('--mix_ratio', type=float, default=0.9)
+    parser.add_argument("--prune_ratio", default=0,type=float, help="The ratio of dataset pruned in the following experiment.")
+    parser.add_argument("--dataset", default="CIFAR100",type=str, help="The dataset is CIFAR10 or CIFAR100.")
     args = parser.parse_args()
 
     # print('Hyper-parameters: \n', args.__dict__)
     config = args.__dict__
     search_space = {
-        "learning_rate": tune.loguniform(1e-3, 1e-1),
-        "batch_size": tune.choice([128, 256]),
-        "momentum": tune.uniform(0.8, 0.99),
-        "weight_decay": tune.uniform(0, 0.001),
-        "mix_ratio": tune.uniform(0.8,0.95)
+        # "learning_rate": tune.loguniform(1e-5, 1e-1),
+        # "batch_size": tune.choice([64, 128, 256]),
+        # "momentum": tune.uniform(0.8, 0.99),
+        # "weight_decay": tune.uniform(0, 0.002),
+        "mix_ratio": tune.uniform(0,0.99)
     }
     
     # search_space.update(args.__dict__)

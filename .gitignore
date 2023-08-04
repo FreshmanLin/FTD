@@ -6,3 +6,4 @@ evaluation/data
 distill/ema_logged_files
 distill/logged_files
 distill/wandb
+evaluation/cifar

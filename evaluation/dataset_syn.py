@@ -9,14 +9,18 @@ from utils.utils_baseline import get_dataset, get_network, get_eval_pool, epoch,
 
 
 class distilled_dataset(Dataset):
-    def __init__(self):
+    def __init__(self, cifar):
         # mean = [0.4914, 0.4822, 0.4465]
         # std = [0.2023, 0.1994, 0.2010]
         # imgs = unnormalize(torch.load(pt_dir), mean, std)
         # self.pt_dir = "/home/stulium/FlatTrajectoryDistillation_FTD/distill/ema_logged_files/CIFAR100/decent-bird-4/ema_images_best.pt"
-        self.pt_dir = "/home/stulium/FlatTrajectoryDistillation_FTD/distill/logged_files/CIFAR100/decent-bird-4/images_5000.pt"
+        if cifar=="CIFAR100":
+            self.pt_dir = "/home/stulium/FlatTrajectoryDistillation_FTD/distill/logged_files/CIFAR100/decent-bird-4/images_5000.pt"
         # self.label_dir = "/home/stulium/FlatTrajectoryDistillation_FTD/distill/ema_logged_files/CIFAR100/decent-bird-4/ema_labels_best.pt"
-        self.label_dir = "/home/stulium/FlatTrajectoryDistillation_FTD/distill/logged_files/CIFAR100/decent-bird-4/labels_5000.pt"
+            self.label_dir = "/home/stulium/FlatTrajectoryDistillation_FTD/distill/logged_files/CIFAR100/decent-bird-4/labels_5000.pt"
+        else:
+            self.pt_dir = "/home/stulium/FlatTrajectoryDistillation_FTD/distill/logged_files/CIFAR10/happy-silence-7/images_5000.pt"
+            self.label_dir = "/home/stulium/FlatTrajectoryDistillation_FTD/distill/logged_files/CIFAR10/happy-silence-7/labels_5000.pt"
         images = torch.load(self.pt_dir)
         # zca = zca_op()
         # images = zca.inverse_transform(images)
